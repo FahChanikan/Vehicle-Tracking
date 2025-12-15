@@ -6,16 +6,16 @@ from inference.models.utils import get_roboflow_model
 
 import supervision as sv
 
-SOURCE = np.array([[272, 1048], [924, 285], [1088, 286], [1676, 1048]], dtype=np.int32)
+SOURCE = np.array([[924, 285],[1088, 286], [1676, 1048], [272, 1048],  ], dtype=np.int32)
 
 TARGET_WIDTH = 11.61
 TARGET_HEIGHT = 155.23
 
 TARGET = np.array([
-    [0.0, 0.0],                 # TL
-    [TARGET_WIDTH, 0.0],         # TR
-    [TARGET_WIDTH, TARGET_HEIGHT],# BR
-    [0.0, TARGET_HEIGHT],        # BL
+    [0.0, 0.0],
+    [TARGET_WIDTH, 0.0],
+    [TARGET_WIDTH, TARGET_HEIGHT],
+    [0.0, TARGET_HEIGHT],
 ], dtype=np.float32)
 
 
@@ -53,9 +53,23 @@ if __name__ == "__main__":
 
     thickness =  sv.calculate_optimal_line_thickness(
         resolution_wh=video_info.resolution_wh)
-    text_scale = sv.calculate_optimal_text_scale(resolution_wh=video_info.resolution_wh)
-    bounding_box_annotator = sv.BoxAnnotator(thickness=thickness)
-    label_annotator = sv.LabelAnnotator(text_scale=text_scale, text_thickness=thickness)
+    # text_scale = sv.calculate_optimal_text_scale(resolution_wh=video_info.resolution_wh)
+    text_scale = 0.45  # ลอง 0.4 – 0.6
+    text_thickness = 1
+    bounding_box_annotator = sv.BoxAnnotator(
+        thickness=thickness,
+        color_lookup=sv.ColorLookup.TRACK)
+    label_annotator = sv.LabelAnnotator(
+        text_scale=text_scale,
+        text_thickness=text_thickness,
+        text_position=sv.Position.BOTTOM_CENTER,
+        color_lookup=sv.ColorLookup.TRACK
+    )
+    trace_annotator = sv.TraceAnnotator(
+        thickness=thickness,
+        trace_length=video_info.fps * 2,
+        position=sv.Position.BOTTOM_CENTER,
+        color_lookup=sv.ColorLookup.TRACK)
 
     frame_generator = sv.get_video_frames_generator(args.source_video_path)
 
@@ -65,6 +79,7 @@ if __name__ == "__main__":
     WINDOW_SECONDS = 1.0
     tracks = defaultdict(lambda: deque(maxlen=int(video_info.fps * WINDOW_SECONDS)))
     MAX_KMH = 180
+    MIN_POINTS = 8
 
     for frame in frame_generator:
         # ---------- detect ----------
@@ -82,16 +97,21 @@ if __name__ == "__main__":
         # ---------- speed ----------
         labels = []
         for tracker_id, (x, y) in zip(detections.tracker_id, points):
+
             tracks[tracker_id].append((float(x), float(y)))
 
-            if len(tracks[tracker_id]) < 5:
+            if len(tracks[tracker_id]) < MIN_POINTS:
                 labels.append(f"#{tracker_id}")
                 continue
 
             arr = np.array(tracks[tracker_id], dtype=np.float32)
-            dif = arr[1:] - arr[:-1]
-            dist = np.linalg.norm(dif, axis=1)  # meters / frame
-            v_kmh = np.median(dist) * video_info.fps * 3.6
+
+            y_start = arr[0, 1]
+            y_end = arr[-1, 1]
+            dt = (len(arr) - 1) / video_info.fps
+
+            v_mps = (y_end - y_start) / dt
+            v_kmh = v_mps * 3.6
 
             if 0 < v_kmh < MAX_KMH:
                 labels.append(f"#{tracker_id} {v_kmh:.1f} km/h")
@@ -100,8 +120,11 @@ if __name__ == "__main__":
 
         # ---------- draw ----------
         annotated_frame = frame.copy()
-        annotated_frame = sv.draw_polygon(
-            annotated_frame, polygon=SOURCE, color=sv.Color.RED
+        # annotated_frame = sv.draw_polygon(
+        #     annotated_frame, polygon=SOURCE, color=sv.Color.RED
+        # )
+        annotated_frame = trace_annotator.annotate(
+            scene=annotated_frame,detections=detections
         )
         annotated_frame = bounding_box_annotator.annotate(
             scene=annotated_frame, detections=detections
