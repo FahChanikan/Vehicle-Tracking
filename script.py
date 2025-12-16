@@ -8,14 +8,10 @@ import supervision as sv
 from rule import SheetLogger, SpeedRuleEngine
 
 
-# =========================
-# ROI (ภาพจริง)
-# =========================
+# ROI
 SOURCE = np.array([[924, 285],[1088, 286], [1676, 1048], [272, 1048]], dtype=np.int32)
 
-# =========================
 # Bird-view
-# =========================
 TARGET_WIDTH = 11.61
 TARGET_HEIGHT = 155.23
 
@@ -26,10 +22,6 @@ TARGET = np.array([
     [0.0, TARGET_HEIGHT],
 ], dtype=np.float32)
 
-
-# =========================
-# เส้นนับเหตุการณ์ (ภาพจริง)
-# =========================
 LINE_P1 = (520, 754)
 LINE_P2 = (1433, 749)
 CROSS_COOLDOWN_SEC = 3.0
@@ -89,26 +81,17 @@ if __name__ == "__main__":
     polygon_zone = sv.PolygonZone(SOURCE)
     view_transformer = ViewTransformer(SOURCE, TARGET)
 
-    # =========================
-    # แปลงเส้นเป็น bird-view
-    # =========================
     line_img = np.array([LINE_P1, LINE_P2], dtype=np.float32)
     line_bird = view_transformer.transform_points(line_img)
     LINE_Y = float(np.mean(line_bird[:, 1]))
     print("LINE_Y (bird-view) =", LINE_Y)
 
-    # =========================
-    # Speed tracking (ของเดิม)
-    # =========================
     WINDOW_SECONDS = 1.0
     MIN_POINTS = 8
     MAX_KMH = 180
 
     tracks = defaultdict(lambda: deque(maxlen=int(fps * WINDOW_SECONDS)))
 
-    # =========================
-    # Line event state
-    # =========================
     prev_y = defaultdict(lambda: None)
     last_cross_time = defaultdict(lambda: 0.0)
 
@@ -116,19 +99,16 @@ if __name__ == "__main__":
     rule_engine = SpeedRuleEngine(sheet_logger, speed_limit=70, cooldown_sec=3)
 
     for frame in frame_generator:
-        # ---------- detect ----------
         result = model.infer(frame)[0]
         detections = sv.Detections.from_inference(result)
         detections = detections[polygon_zone.trigger(detections)]
         detections = byte_track.update_with_detections(detections=detections)
 
-        # ---------- transform ----------
         points = detections.get_anchors_coordinates(
             anchor=sv.Position.BOTTOM_CENTER
         )
         points = view_transformer.transform_points(points)
 
-        # ---------- speed (เหมือนเดิมทุกบรรทัด) ----------
         labels = []
         for tracker_id, (x, y) in zip(detections.tracker_id, points):
             if tracker_id is None:
@@ -155,7 +135,6 @@ if __name__ == "__main__":
             v_mps = (y_end - y_start) / dt
             v_kmh = abs(v_mps) * 3.6
 
-            # ---------- line crossing (เพิ่มอย่างเดียว) ----------
             py = prev_y[tracker_id]
             if py is not None and py < LINE_Y <= y:
                 now = cv2.getTickCount() / cv2.getTickFrequency()
@@ -176,7 +155,6 @@ if __name__ == "__main__":
             else:
                 labels.append(f"#{tracker_id}")
 
-        # ---------- draw ----------
         annotated = frame.copy()
         cv2.line(annotated, LINE_P1, LINE_P2, (0, 255, 0), 2)
         annotated = trace_annotator.annotate(annotated, detections)
