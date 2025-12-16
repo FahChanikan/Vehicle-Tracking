@@ -11,4 +11,5 @@ __pycache__/
 
 # Secrets / credentials
 service_account.json
-*.json
+*service_account*.json
+
