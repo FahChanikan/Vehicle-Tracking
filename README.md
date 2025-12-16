@@ -39,4 +39,4 @@ Make sure the Python environment is properly configured before running the scrip
 Ensure you are using the correct Python interpreter:
 
 ```bash
-E:\conda_envs\opencv_car\python.exe
+ E:\conda_envs\opencv_car\python.exe script.py --source_video_path "NUAA road 1080p.mp4"

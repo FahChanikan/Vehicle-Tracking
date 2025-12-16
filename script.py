@@ -5,6 +5,8 @@ import numpy as np
 from inference.models.utils import get_roboflow_model
 
 import supervision as sv
+from rule import SheetLogger, SpeedRuleEngine
+
 
 SOURCE = np.array([[924, 285],[1088, 286], [1676, 1048], [272, 1048],  ], dtype=np.int32)
 
@@ -81,6 +83,9 @@ if __name__ == "__main__":
     MAX_KMH = 180
     MIN_POINTS = 8
 
+    sheet_logger = SheetLogger()
+    rule_engine = SpeedRuleEngine(sheet_logger, speed_limit=70, cooldown_sec=3)
+
     for frame in frame_generator:
         # ---------- detect ----------
         result = model.infer(frame)[0]
@@ -97,6 +102,9 @@ if __name__ == "__main__":
         # ---------- speed ----------
         labels = []
         for tracker_id, (x, y) in zip(detections.tracker_id, points):
+            if tracker_id is None:
+                labels.append("")
+                continue
 
             tracks[tracker_id].append((float(x), float(y)))
 
@@ -109,12 +117,21 @@ if __name__ == "__main__":
             y_start = arr[0, 1]
             y_end = arr[-1, 1]
             dt = (len(arr) - 1) / video_info.fps
+            if dt <= 0:
+                labels.append(f"#{tracker_id}")
+                continue
 
             v_mps = (y_end - y_start) / dt
-            v_kmh = v_mps * 3.6
+            v_kmh = abs(v_mps) * 3.6
 
             if 0 < v_kmh < MAX_KMH:
                 labels.append(f"#{tracker_id} {v_kmh:.1f} km/h")
+
+                try:
+                    rule_engine.push_if_overspeed(str(tracker_id), float(v_kmh))
+                except Exception as e:
+                    print("[SHEET ERROR]", e)
+
             else:
                 labels.append(f"#{tracker_id}")
 
