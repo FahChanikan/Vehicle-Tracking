@@ -20,24 +20,6 @@ TARGET = np.array([
     [0.0, TARGET_HEIGHT],
 ], dtype=np.float32)
 
-# ===== Trust zone (bird-view) =====
-X_MIN, X_MAX = -1.0, 6.0
-Y_MIN, Y_MAX = 32.0, 128.0
-
-# ===== Speed params =====
-WINDOW_SECONDS = 1.0
-MIN_POINTS = 10          # 30 fps -> 10 จุด ~ 0.33s (นิ่งขึ้น), ปรับได้
-MAX_KMH = 180.0
-
-# ===== Event line (ภาพจริง pixel) =====
-LINE_P1 = (520, 754)
-LINE_P2 = (1433, 749)
-
-# กันยิงซ้ำ “การข้ามเส้น” ต่อคัน
-CROSS_COOLDOWN_SEC = 2.0
-
-def in_trust_zone(x: float, y: float) -> bool:
-    return (X_MIN <= x <= X_MAX) and (Y_MIN <= y <= Y_MAX)
 
 class ViewTransformer:
     def __init__(self, source: np.ndarray, target: np.ndarray):
@@ -74,7 +56,7 @@ if __name__ == "__main__":
     thickness =  sv.calculate_optimal_line_thickness(
         resolution_wh=video_info.resolution_wh)
     # text_scale = sv.calculate_optimal_text_scale(resolution_wh=video_info.resolution_wh)
-    text_scale = 0.45
+    text_scale = 0.45  # ลอง 0.4 – 0.6
     text_thickness = 1
     bounding_box_annotator = sv.BoxAnnotator(
         thickness=thickness,
@@ -95,15 +77,6 @@ if __name__ == "__main__":
 
     polygon_zone = sv.PolygonZone(SOURCE)
     view_transformer = ViewTransformer(source=SOURCE, target=TARGET)
-
-    # แปลงเส้น event ไป bird-view
-    line_img = np.array([LINE_P1, LINE_P2], dtype=np.float32)
-    line_bird = view_transformer.transform_points(line_img)
-    LINE_Y = float(np.mean(line_bird[:, 1]))
-
-    last_speed = defaultdict(lambda: None)
-    prev_y = defaultdict(lambda: None)
-    last_cross_time = defaultdict(lambda: 0.0)
 
     WINDOW_SECONDS = 1.0
     tracks = defaultdict(lambda: deque(maxlen=int(video_info.fps * WINDOW_SECONDS)))
@@ -135,16 +108,8 @@ if __name__ == "__main__":
 
             tracks[tracker_id].append((float(x), float(y)))
 
-            # ---------- ใช้ค่าเดิมถ้าออกนอก trust zone ----------
-            if not (X_MIN <= x <= X_MAX and Y_MIN <= y <= Y_MAX):
-                v_show = last_speed[tracker_id]
-                labels.append(f"#{tracker_id}" if v_show is None else f"#{tracker_id} {v_show:.1f} km/h")
-                prev_y[tracker_id] = y
-                continue
-
             if len(tracks[tracker_id]) < MIN_POINTS:
                 labels.append(f"#{tracker_id}")
-                prev_y[tracker_id] = y
                 continue
 
             arr = np.array(tracks[tracker_id], dtype=np.float32)
@@ -154,32 +119,21 @@ if __name__ == "__main__":
             dt = (len(arr) - 1) / video_info.fps
             if dt <= 0:
                 labels.append(f"#{tracker_id}")
-                prev_y[tracker_id] = y
                 continue
 
-            # ✅ สูตรเดิมของคุณ (ไม่แตะ)
             v_mps = (y_end - y_start) / dt
             v_kmh = abs(v_mps) * 3.6
 
             if 0 < v_kmh < MAX_KMH:
-                last_speed[tracker_id] = v_kmh
-
-                # ---------- ยิง event ตอนข้ามเส้น ----------
-                py = prev_y[tracker_id]
-                if py is not None and py < LINE_Y <= y:
-                    now = cv2.getTickCount() / cv2.getTickFrequency()
-                    if now - last_cross_time[tracker_id] > CROSS_COOLDOWN_SEC:
-                        last_cross_time[tracker_id] = now
-                        try:
-                            rule_engine.push_if_overspeed(str(tracker_id), v_kmh)
-                        except Exception as e:
-                            print("[SHEET ERROR]", e)
-
                 labels.append(f"#{tracker_id} {v_kmh:.1f} km/h")
+
+                try:
+                    rule_engine.push_if_overspeed(str(tracker_id), float(v_kmh))
+                except Exception as e:
+                    print("[SHEET ERROR]", e)
+
             else:
                 labels.append(f"#{tracker_id}")
-
-            prev_y[tracker_id] = y
 
         # ---------- draw ----------
         annotated_frame = frame.copy()
